@@ -71,6 +71,8 @@ describe("AgentSession retry", () => {
 	async function createSession(options?: {
 		failCount?: number;
 		maxRetries?: number;
+		baseDelayMs?: number;
+		maxBackoffMs?: number;
 		delayAssistantMessageEndMs?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
@@ -108,7 +110,14 @@ describe("AgentSession retry", () => {
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = await createModelRegistry(authStorage, tempDir);
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
-		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1 } });
+		settingsManager.applyOverrides({
+			retry: {
+				enabled: true,
+				maxRetries,
+				baseDelayMs: options?.baseDelayMs ?? 1,
+				...(options?.maxBackoffMs !== undefined ? { maxBackoffMs: options.maxBackoffMs } : {}),
+			},
+		});
 
 		session = new AgentSession({
 			agent,
@@ -130,7 +139,7 @@ describe("AgentSession retry", () => {
 			};
 		}
 
-		return { session, getCallCount: () => callCount };
+		return { session, sessionManager, getCallCount: () => callCount };
 	}
 
 	it("retries after a transient error and succeeds", async () => {
@@ -163,6 +172,38 @@ describe("AgentSession retry", () => {
 		expect(events).toContain("start:2");
 		expect(events).toContain("end:success=false");
 		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("persists each backoff as an auto-retry-backoff custom entry", async () => {
+		const created = await createSession({ failCount: 2, maxRetries: 3 });
+
+		await created.session.prompt("Test");
+
+		const entries = created.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom" && entry.customType === "auto-retry-backoff");
+		expect(entries).toHaveLength(2);
+		const data = entries.map((entry) => (entry.type === "custom" ? entry.data : undefined)) as Array<{
+			attempt: number;
+			maxAttempts: number;
+			delayMs: number;
+			errorMessage: string;
+		}>;
+		expect(data[0]).toEqual({ attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "overloaded_error" });
+		expect(data[1]).toEqual({ attempt: 2, maxAttempts: 3, delayMs: 2, errorMessage: "overloaded_error" });
+	});
+
+	it("caps the backoff delay at maxBackoffMs", async () => {
+		const created = await createSession({ failCount: 2, maxRetries: 3, baseDelayMs: 50_000, maxBackoffMs: 1 });
+		const delays: number[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") delays.push(event.delayMs);
+		});
+
+		await created.session.prompt("Test");
+
+		// Uncapped, the delays would be 50s and 100s.
+		expect(delays).toEqual([1, 1]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

@@ -205,6 +205,55 @@ describe("retryAssistantCall", () => {
 		]);
 	});
 
+	it("caps the per-attempt backoff delay at maxBackoffMs", async () => {
+		let n = 0;
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 4
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" })
+				: fauxAssistantMessage("recovered");
+		});
+		const policy: RetryPolicy = { enabled: true, maxRetries: 3, baseDelayMs: 10_000, maxBackoffMs: 1 };
+		const delays: number[] = [];
+		const onRetryScheduled = vi.fn((_attempt: number, _max: number, delayMs: number) => {
+			delays.push(delayMs);
+		});
+		const res = await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+		expect(res.content).toEqual([{ type: "text", text: "recovered" }]);
+		// Uncapped, the delays would be 10s, 20s, 40s.
+		expect(delays).toEqual([1, 1, 1]);
+	});
+
+	it("treats an invalid maxBackoffMs as the 60s default instead of a hot loop", async () => {
+		const controller = new AbortController();
+		const produce = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" }));
+		const policy: RetryPolicy = { enabled: true, maxRetries: 1, baseDelayMs: 100_000, maxBackoffMs: -1 };
+		const delays: number[] = [];
+		const onRetryScheduled = vi.fn((_attempt: number, _max: number, delayMs: number) => {
+			delays.push(delayMs);
+		});
+		const p = retryAssistantCall(produce, policy, controller.signal, { onRetryScheduled });
+		await vi.waitFor(() => expect(onRetryScheduled).toHaveBeenCalled());
+		controller.abort();
+		await p;
+		expect(delays).toEqual([60_000]);
+	});
+
+	it("caps the backoff delay at 60s by default", async () => {
+		const controller = new AbortController();
+		const produce = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" }));
+		const policy: RetryPolicy = { enabled: true, maxRetries: 1, baseDelayMs: 100_000 };
+		const delays: number[] = [];
+		const onRetryScheduled = vi.fn((_attempt: number, _max: number, delayMs: number) => {
+			delays.push(delayMs);
+		});
+		const p = retryAssistantCall(produce, policy, controller.signal, { onRetryScheduled });
+		await vi.waitFor(() => expect(onRetryScheduled).toHaveBeenCalled());
+		controller.abort();
+		await p;
+		expect(delays).toEqual([60_000]);
+	});
+
 	it("aborts backoff sleep via signal, returns an aborted message, and emits onRetryFinished(false)", async () => {
 		const controller = new AbortController();
 		const produce = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" }));

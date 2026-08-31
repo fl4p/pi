@@ -89,11 +89,14 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"ResourceExhausted",
 ]);
 
+/** Default cap for the per-attempt exponential backoff delay. */
+export const DEFAULT_MAX_BACKOFF_MS = 60_000;
+
 /**
- * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
- * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`) in coding-agent; kept
- * here so the classifier and the policy-driven retry loop live together and stay reusable
- * by the SDK and other callers.
+ * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`,
+ * capped at `maxBackoffMs`). Matches `settings.retry` (`enabled`, `maxRetries`,
+ * `baseDelayMs`, `maxBackoffMs`) in coding-agent; kept here so the classifier and the
+ * policy-driven retry loop live together and stay reusable by the SDK and other callers.
  */
 export interface RetryPolicy {
 	enabled: boolean;
@@ -101,6 +104,18 @@ export interface RetryPolicy {
 	maxRetries: number;
 	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter. */
 	baseDelayMs: number;
+	/**
+	 * Cap in ms for the per-attempt backoff delay (default {@link DEFAULT_MAX_BACKOFF_MS}).
+	 * Must be a finite number >= 0; 0 means no delay between attempts, and invalid
+	 * values fall back to the default. Without a cap, large `maxRetries` budgets
+	 * produce unusable delays: attempt 20 from a 2 s base waits 2s * 2^19, ~12 days.
+	 */
+	maxBackoffMs?: number;
+}
+
+/** Resolve a user-supplied backoff cap: finite and >= 0, else the default. */
+export function sanitizeMaxBackoffMs(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : DEFAULT_MAX_BACKOFF_MS;
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
@@ -193,7 +208,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+		const delayMs = Math.min(policy!.baseDelayMs * 2 ** (attempt - 1), sanitizeMaxBackoffMs(policy!.maxBackoffMs));
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as

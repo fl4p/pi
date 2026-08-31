@@ -2898,10 +2898,21 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const delayMs = Math.min(settings.baseDelayMs * 2 ** (this._retryAttempt - 1), settings.maxBackoffMs);
 
 		this._emit({
 			type: "auto_retry_start",
+			attempt: this._retryAttempt,
+			maxAttempts: settings.maxRetries,
+			delayMs,
+			errorMessage: message.errorMessage || "Unknown error",
+		});
+
+		// Persist the scheduled backoff in the session so time lost to provider
+		// throttling stays traceable after the fact (events are not persisted). Written
+		// before the sleep, so it records the scheduled delay, not measured elapsed
+		// time, and an aborted wait still leaves its audit record.
+		this.sessionManager.appendCustomEntry("auto-retry-backoff", {
 			attempt: this._retryAttempt,
 			maxAttempts: settings.maxRetries,
 			delayMs,

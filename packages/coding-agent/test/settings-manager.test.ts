@@ -625,4 +625,26 @@ describe("SettingsManager", () => {
 			expect(manager.getShellPath()).toBe(homedir());
 		});
 	});
+
+	describe("getRetrySettings maxBackoffMs", () => {
+		function managerWithRetry(retry: unknown): SettingsManager {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry }));
+			return SettingsManager.create(projectDir, agentDir);
+		}
+
+		it("defaults to 60000 when unset", () => {
+			expect(managerWithRetry({}).getRetrySettings().maxBackoffMs).toBe(60_000);
+		});
+
+		it("passes through a valid cap, including 0", () => {
+			expect(managerWithRetry({ maxBackoffMs: 5000 }).getRetrySettings().maxBackoffMs).toBe(5000);
+			expect(managerWithRetry({ maxBackoffMs: 0 }).getRetrySettings().maxBackoffMs).toBe(0);
+		});
+
+		it("falls back to the default for negative or non-numeric values", () => {
+			expect(managerWithRetry({ maxBackoffMs: -1 }).getRetrySettings().maxBackoffMs).toBe(60_000);
+			expect(managerWithRetry({ maxBackoffMs: "NaN" }).getRetrySettings().maxBackoffMs).toBe(60_000);
+			expect(managerWithRetry({ maxBackoffMs: null }).getRetrySettings().maxBackoffMs).toBe(60_000);
+		});
+	});
 });

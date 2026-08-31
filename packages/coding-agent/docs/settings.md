@@ -143,9 +143,12 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
+| `retry.maxBackoffMs` | number | `60000` | Cap for the per-attempt backoff delay (60s). Finite number >= 0; `0` means no delay between attempts; invalid values fall back to the default |
 | `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
+
+The backoff delay doubles per attempt from `retry.baseDelayMs` and is capped at `retry.maxBackoffMs`, so large `retry.maxRetries` budgets (for riding out sustained provider throttling) wait at most the cap per attempt. Each backoff is also persisted in the session as an `auto-retry-backoff` custom entry recording the scheduled delay (attempt, delayMs, error), written before the wait starts — it is a raw audit record of scheduled backoff, not measured elapsed time, and a cancelled retry still leaves its entry. Plain custom entries never enter the LLM context and are not rendered in the transcript; read them from the session JSONL or RPC `get_entries`.
 
 When a provider requests a retry delay longer than `retry.provider.maxRetryDelayMs`, the request fails immediately with an informative error instead of waiting silently. Set it to `0` to disable the limit.
 
@@ -157,6 +160,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
     "enabled": true,
     "maxRetries": 3,
     "baseDelayMs": 2000,
+    "maxBackoffMs": 60000,
     "provider": {
       "timeoutMs": 3600000,
       "maxRetries": 0,
