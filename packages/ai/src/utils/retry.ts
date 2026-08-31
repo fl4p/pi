@@ -23,6 +23,21 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"billing",
 ]);
 
+// Provider account suspensions are deterministic at request time but often recoverable
+// out of band (top up, raise the spending limit), so they ride the bounded retry budget
+// instead of failing fast. Checked before the non-retryable limit pattern because
+// suspension messages usually mention billing, e.g. Fireworks 412 PRECONDITION_FAILED:
+// "Account <name> is suspended, possibly due to reaching the monthly spending limit or
+// failure to pay past invoices. Please go to https://fireworks.ai/account/billing ...".
+// Deliberately requires suspension wording: a bare PRECONDITION_FAILED/412 has
+// provider-specific meanings and must not bypass the quota/billing fail-fast. The
+// pattern cannot tell a spending-limit suspension from a permanent ban; the capped
+// retry budget bounds the cost of retrying the latter.
+const RETRYABLE_ACCOUNT_SUSPENSION_PATTERN = buildProviderErrorPattern([
+	"account .{0,60}suspended",
+	"suspended .{0,20}account",
+]);
+
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
@@ -238,6 +253,7 @@ export async function retryAssistantCall(
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
+	if (RETRYABLE_ACCOUNT_SUSPENSION_PATTERN.test(errorMessage)) return true;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }

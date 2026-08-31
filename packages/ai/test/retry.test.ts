@@ -76,6 +76,42 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("classifies account suspensions as retryable despite billing wording", () => {
+		const fireworksSuspension =
+			'412: {"message":"Account acme is suspended, possibly due to reaching the monthly spending limit or failure to pay past invoices. Please go to https://fireworks.ai/account/billing for more information.","param":null,"code":"PRECONDITION_FAILED","type":"error"}';
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: fireworksSuspension }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Account acme is suspended." }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "403: suspended account" }),
+			),
+		).toBe(true);
+		// Quota/billing exhaustion without suspension wording still fails fast.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota: check billing" }),
+			),
+		).toBe(false);
+		// A bare precondition failure without suspension wording is not retryable:
+		// the code alone must not bypass the quota/billing fail-fast.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: '412: {"code":"PRECONDITION_FAILED","message":"billing profile incomplete"}',
+				}),
+			),
+		).toBe(false);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
