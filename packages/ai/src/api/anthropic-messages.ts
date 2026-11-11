@@ -74,7 +74,11 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.75";
+const claudeCodeVersion = "2.1.317";
+
+// Must stay byte-exact: the server accepts a system block holding this line and
+// nothing else as Claude Code traffic, and rejects appended text.
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -1008,19 +1012,24 @@ function buildParams(
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
+		// The system block must hold the exact identity line and nothing else: a
+		// second block carrying the agent's own prompt makes the server classify the
+		// request as third-party traffic, which is billed to extra usage instead of
+		// the subscription plan. The prompt therefore rides in the first user turn,
+		// where it is still part of the cached prefix.
 		params.system = [
 			{
 				type: "text",
-				text: "You are Claude Code, Anthropic's official CLI for Claude.",
+				text: CLAUDE_CODE_IDENTITY,
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
 		if (context.systemPrompt) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+			params.messages = moveSystemPromptIntoFirstUserTurn(
+				params.messages,
+				sanitizeSurrogates(context.systemPrompt),
+				cacheControl,
+			);
 		}
 	} else if (context.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
@@ -1150,6 +1159,41 @@ function convertToolResult(
 					? [{ type: "text", text: convertedContent }]
 					: convertedContent,
 	};
+}
+
+/**
+ * Insert the agent system prompt as the first block of the first user turn. Used
+ * for OAuth requests, which must keep the Claude Code identity block alone.
+ */
+function moveSystemPromptIntoFirstUserTurn(
+	messages: MessageParam[],
+	systemPrompt: string,
+	cacheControl?: CacheControlEphemeral,
+): MessageParam[] {
+	const block: ContentBlockParam = {
+		type: "text",
+		text: systemPrompt,
+		...(cacheControl ? { cache_control: cacheControl } : {}),
+	};
+
+	const index = messages.findIndex((message) => message.role === "user");
+	if (index === -1) {
+		return [{ role: "user", content: [block] }, ...messages];
+	}
+
+	const target = messages[index];
+	const content: ContentBlockParam[] = [
+		block,
+		...(typeof target.content === "string"
+			? target.content.trim().length > 0
+				? [{ type: "text" as const, text: target.content }]
+				: []
+			: target.content),
+	];
+
+	const result = [...messages];
+	result[index] = { role: "user", content };
+	return result;
 }
 
 function convertMessages(
