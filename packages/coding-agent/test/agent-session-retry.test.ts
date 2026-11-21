@@ -119,7 +119,7 @@ describe("AgentSession retry", () => {
 			};
 		}
 
-		return { session, getCallCount: () => callCount };
+		return { session, sessionManager, getCallCount: () => callCount };
 	}
 
 	it("retries after a transient error and succeeds", async () => {
@@ -165,6 +165,22 @@ describe("AgentSession retry", () => {
 		await created.session.prompt("Test");
 
 		expect(delays).toEqual([1, 2, 4, 5]);
+	});
+
+	it("persists each backoff as an auto-retry-backoff custom entry", async () => {
+		const created = await createSession({ failCount: 2, maxRetries: 3 });
+
+		await created.session.prompt("Test");
+
+		const data = created.sessionManager
+			.getEntries()
+			.flatMap((entry) =>
+				entry.type === "custom" && entry.customType === "auto-retry-backoff" ? [entry.data] : [],
+			);
+		expect(data).toEqual([
+			{ attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "overloaded_error" },
+			{ attempt: 2, maxAttempts: 3, delayMs: 2, errorMessage: "overloaded_error" },
+		]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

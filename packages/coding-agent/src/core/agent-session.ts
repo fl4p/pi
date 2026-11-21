@@ -3957,6 +3957,19 @@ export class AgentSession {
 			errorMessage: message.errorMessage || "Unknown error",
 		});
 
+		// Persist the scheduled backoff so time lost to provider throttling stays traceable
+		// after the fact (auto_retry_start events are not persisted). Written before the
+		// sleep, so it records the scheduled delay rather than elapsed time, and an aborted
+		// wait still leaves its record. Custom entries never enter the LLM context.
+		const backoffEntryId = this.sessionManager.appendCustomEntry("auto-retry-backoff", {
+			attempt: this._retryAttempt,
+			maxAttempts: settings.maxRetries,
+			delayMs,
+			errorMessage: message.errorMessage || "Unknown error",
+		});
+		const backoffEntry = this.sessionManager.getEntry(backoffEntryId);
+		if (backoffEntry) this._emit({ type: "entry_appended", entry: backoffEntry });
+
 		// Keep the failed attempt in raw history while durably omitting it from model projection.
 		this._omitRecoveryAttempt(message);
 
