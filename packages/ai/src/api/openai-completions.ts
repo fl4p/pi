@@ -45,6 +45,7 @@ import {
 	isOpenRouterModel,
 	type OpenRouterUsageAccounting,
 } from "../utils/openrouter-cost.ts";
+import { logRequestPayload } from "../utils/payload-log.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -372,6 +373,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				cacheRetention,
 				grammarToolInputProperties,
 			);
+			await logRequestPayload(model.id, params, options?.env);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
