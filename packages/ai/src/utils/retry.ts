@@ -147,6 +147,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// gRPC based providers (e.g. NVIDIA NIM)
 	"ResourceExhausted",
 
+	// vLLM serving-engine worker crashes surface as a bare "EngineCore encountered an
+	// issue" message with no HTTP status in the text (seen from Fireworks glm-5p3-flash).
+	// The replica died server-side; a retry lands on a healthy one.
+	"EngineCore",
+
 	// Sign in with ChatGPT: usage or user data temporarily unavailable. Usage
 	// failures can arrive mid-stream without an HTTP 503 in the message.
 	"subscription_sharing_usage_unavailable",

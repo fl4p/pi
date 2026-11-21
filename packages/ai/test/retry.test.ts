@@ -188,6 +188,11 @@ describe("provider retry classification", () => {
 		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
 	});
 
+	it("retries vLLM engine worker crashes reported without an HTTP status", () => {
+		const errorMessage = "EngineCore encountered an issue. See stack trace (above) for the root cause.";
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it("classifies account suspensions as retryable despite billing wording", () => {
 		const fireworksSuspension =
 			'412: {"message":"Account acme is suspended, possibly due to reaching the monthly spending limit or failure to pay past invoices. Please go to https://fireworks.ai/account/billing for more information.","param":null,"code":"PRECONDITION_FAILED","type":"error"}';
